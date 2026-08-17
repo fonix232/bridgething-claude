@@ -2,8 +2,10 @@
 //   node scripts/device.mjs [out.png]
 // Raw-WebSocket CDP: Playwright's connectOverCDP hangs against this chromium,
 // so the protocol is spoken directly over the page target's socket.
+import { findDevice } from './find-device.mjs';
+
 const out = process.argv[2] || 'device.png';
-const DEVICE = process.env.CARTHING_CDP || 'http://10.42.1.178:9222';
+const DEVICE = await findDevice();
 
 const targets = await fetch(DEVICE + '/json').then(r => r.json());
 const page = targets.find(t => t.type === 'page');

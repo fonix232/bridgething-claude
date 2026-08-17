@@ -22,10 +22,6 @@ AGENT_DIR="$HOME/Library/LaunchAgents"
 DAEMON_PLIST="$AGENT_DIR/$DAEMON_LABEL.plist"
 TUNNEL_PLIST="$AGENT_DIR/$TUNNEL_LABEL.plist"
 
-# Same default and override as mac/tunnel.sh, so the reachability check below
-# tests the host the tunnel will actually dial.
-DEVICE="${CLAUDE_THING_DEVICE:-10.42.1.178}"
-
 WANT_AGENT=1
 [ "${1:-}" = "--no-agent" ] && WANT_AGENT=0
 
@@ -109,13 +105,13 @@ fi
 # The Mac half is useful before the device is ever plugged in — the control page
 # and the session watching work without it. So this warns, it does not fail.
 say "Device"
-if /usr/bin/ssh -o ConnectTimeout=5 \
-      -o StrictHostKeyChecking=accept-new \
-      -o UserKnownHostsFile="$HOME/.ssh/known_hosts_carthing" \
-      "root@$DEVICE" true 2>/dev/null; then
+# Same scan as mac/tunnel.sh (see mac/find-device.sh) — a hit here already
+# means a real SSH login succeeded, so there is no separate reachability check.
+DEVICE="$(mac/find-device.sh || true)"
+if [ -n "$DEVICE" ]; then
   ok "$DEVICE reachable over USB"
 else
-  warn "$DEVICE not reachable — plug the Car Thing in. The tunnel agent keeps"
+  warn "no device found on ${CLAUDE_THING_SUBNET:-10.42.1}.0/24 — plug the Car Thing in. The tunnel agent keeps"
   warn "  retrying every 10s, so it picks the device up on its own."
 fi
 

@@ -3,8 +3,10 @@
 // Preset 1/2/3 are the page buttons, preset 4 denies, Enter is the dial press —
 // so Enter and 4 answer whatever permission is in front of you. Handle with
 // care against a device holding real asks.
+import { findDevice } from './find-device.mjs';
+
 const which = process.argv[2] || 'Enter';
-const DEVICE = process.env.CARTHING_CDP || 'http://10.42.1.178:9222';
+const DEVICE = await findDevice();
 
 const KEYS = {
   Enter:  { key: 'Enter',  code: 'Enter',  keyCode: 13, text: '\r' },

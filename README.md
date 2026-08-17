@@ -193,8 +193,12 @@ taking the installed webapp with it. Re-push.
 and does the device see it —
 
 ```sh
-/usr/bin/ssh root@10.42.1.178 'wget -q -O - -T 5 http://127.0.0.1:8790/status'
+/usr/bin/ssh "root@$(mac/find-device.sh)" 'wget -q -O - -T 5 http://127.0.0.1:8790/status'
 ```
+
+The device's address on the USB gadget subnet isn't fixed — `mac/find-device.sh`
+scans 10.42.1.0/24 for it, and `mac/tunnel.sh` keeps rescanning on its own
+whenever the device is unplugged, so there is nothing to configure.
 
 After a reconnect the banner can take up to 30s to clear — that is the app's
 backoff, not a failure.
