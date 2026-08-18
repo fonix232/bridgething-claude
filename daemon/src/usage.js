@@ -27,11 +27,27 @@ const STATE_NAME = 'usage';
 const RUN_TIMEOUT_MS = 45_000;
 
 // "Current session: 11% used · resets Jul 30 at 5:19am (America/New_York)"
+// — the CLI's older format. Kept for backward compatibility; CLI 2.1.x+ uses
+// the progress-bar block matched by PROGRESS_BAR_RE below instead.
 const LIMIT_RE = /^\s*Current\s+(session|week[^:]*):\s*(\d+)%\s*used(?:\s*·\s*resets\s+([^(\n]+?))?\s*(?:\(([^)]+)\))?\s*$/i;
-// "Last 24h · 579 requests · 8 sessions"
+// "Last 24h · 579 requests · 8 sessions" — older format's window header.
 const WINDOW_RE = /^\s*Last\s+(\S+)\s*·\s*([\d,]+)\s+requests\s*·\s*([\d,]+)\s+sessions\s*$/i;
-// "Top skills: /webapp-testing 4%, /frontend-design 1%"
+// "Top skills: /webapp-testing 4%, /frontend-design 1%" — older format.
 const TOP_RE = /^Top\s+(skills|subagents|MCP servers):\s*(.+)$/i;
+
+// Current CLI: a rendered progress bar (block-drawing chars) ending "NN% used",
+// preceded by a heading line ("Claude Code and Cowork credit") and followed by
+// a detail line ("One-time credit · Expires September 29"). The heading isn't
+// reliable across plan types, so it's read from whatever precedes the bar.
+const PROGRESS_BAR_RE = /(\d+)%\s*used\s*$/;
+// "Skills                  % of usage" / "Subagents ..." / "MCP servers ..."
+const TABLE_HEADER_RE = /^\s*(Skills|Subagents|MCP servers)\s{2,}%\s*of\s*usage\s*$/i;
+// "<name>          <NN>%" — at least two spaces before the trailing percentage
+// (the columns are padded to align), so a stray prose line can't be mistaken
+// for a row — those never end in a bare "NN%" here.
+const TABLE_ROW_RE = /^\s*(\S.*?)\s{2,}(\d+)%\s*$/;
+// "Showing last-known usage as of 2m ago (rate limited — try again in a moment)"
+const STALE_NOTICE_RE = /^\s*Showing\s+last-known\s+usage\s+as\s+of\s+(.+?)\s+ago/i;
 
 // Trailing percentage per item; anything that doesn't match that shape is kept
 // with an empty value rather than dropped, so an unparsed entry still shows.
@@ -55,17 +71,36 @@ function labelFor(kind) {
 }
 
 export function parseUsage(text, now = Date.now()) {
-  const lines = String(text).split('\n');
+  const lines = String(text).split('\n').map((l) => l.replace(/\s+$/, ''));
+  const rawLines = String(text).split('\n');
   const limits = [];
   const windows = [];
   let current = null;
   let subscription = null;
+  let stale = false;
+  // Which table a run of rows belongs to — only set right after a table
+  // header, cleared on any line that doesn't look like a row (esp. blanks).
+  let inTable = null;
 
-  for (const raw of lines) {
-    const line = raw.replace(/\s+$/, '');
+  function ensureWindow() {
+    if (!current) {
+      current = { window: 'Last 24h', requests: 0, sessions: 0, notes: [], skills: [], subagents: [], mcp: [] };
+      windows.push(current);
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const raw = rawLines[i];
+    if (!line.trim()) { inTable = null; continue; }
 
     if (/subscription to power your Claude Code usage/i.test(line)) {
       subscription = line.trim();
+      continue;
+    }
+
+    if (STALE_NOTICE_RE.test(line)) {
+      stale = true;
       continue;
     }
 
@@ -86,21 +121,52 @@ export function parseUsage(text, now = Date.now()) {
         window: `Last ${win[1]}`,
         requests: Number(win[2].replace(/,/g, '')),
         sessions: Number(win[3].replace(/,/g, '')),
-        notes: [],
-        skills: [],
-        subagents: [],
-        mcp: [],
+        notes: [], skills: [], subagents: [], mcp: [],
       };
       windows.push(current);
       continue;
     }
 
-    // indented bullets under a window: behaviours and top skills/subagents/MCP
+    // Current-format progress-bar block: heading line (previous), the bar
+    // itself (this line), optional detail line (next).
+    const bar = PROGRESS_BAR_RE.exec(line);
+    if (bar) {
+      const heading = (i > 0 ? lines[i - 1].trim() : '') || 'Usage';
+      const nextLine = i + 1 < lines.length ? lines[i + 1].trim() : '';
+      const detail = nextLine && !TABLE_HEADER_RE.test(nextLine) && !PROGRESS_BAR_RE.test(nextLine) && !LIMIT_RE.test(nextLine)
+        ? nextLine : '';
+      limits.push({
+        key: heading.toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-+|-+$/g, ''),
+        label: heading.toUpperCase(),
+        used: Number(bar[1]) / 100,
+        detail,
+      });
+      continue;
+    }
+
+    const tableHeader = TABLE_HEADER_RE.exec(line);
+    if (tableHeader) {
+      const key = { skills: 'skills', subagents: 'subagents', 'mcp servers': 'mcp' }[tableHeader[1].toLowerCase()];
+      if (key) {
+        ensureWindow();
+        inTable = key;
+      }
+      continue;
+    }
+
+    if (inTable) {
+      const row = TABLE_ROW_RE.exec(line);
+      if (row) {
+        current[inTable].push({ name: row[1].trim(), pct: `${row[2]}%` });
+        continue;
+      }
+      inTable = null;
+    }
+
+    // Old-format indented bullets under a window ("  Top skills: a 4%, b 1%").
     if (current && /^\s{2,}\S/.test(raw) && line.trim()) {
       const note = line.trim();
       current.notes.push(note);
-      // "Top skills: /webapp-testing 4%, /deploy-to-dev 1%" is a table wearing
-      // a sentence. Split it here so the device renders rows, not prose.
       const top = TOP_RE.exec(note);
       if (top) {
         const key = { skills: 'skills', subagents: 'subagents', 'mcp servers': 'mcp' }[top[1].toLowerCase()];
@@ -111,13 +177,15 @@ export function parseUsage(text, now = Date.now()) {
 
   if (!limits.length) return null;
 
-  return {
+  const result = {
     updatedTs: now,
     updatedLabel: 'updated ' + new Date(now).toTimeString().slice(0, 5) + ' · from claude /usage',
     subscription,
     limits,
     windows,
   };
+  if (stale) result.stale = true;
+  return result;
 }
 
 // --- keeping a reading honest across polls ------------------------------------

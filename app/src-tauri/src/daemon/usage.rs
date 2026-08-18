@@ -50,6 +50,39 @@ fn non_alpha_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"[^a-z]+").unwrap())
 }
 
+// Current CLI (2.1.x+) replaced the old "Current session/week: NN% used"
+// lines with a rendered progress bar (block-drawing chars) ending "NN% used",
+// preceded by a heading line and followed by a detail line — e.g.:
+//   Claude Code and Cowork credit
+//   ████████████████████████████▌                      57% used
+//   One-time credit · Expires September 29
+// The heading text isn't reliable across plan types, so it's read from
+// whatever line precedes the bar rather than matched literally.
+fn progress_bar_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(\d+)%\s*used\s*$").unwrap())
+}
+
+// "Skills                  % of usage" / "Subagents ..." / "MCP servers ..."
+// header, followed by "<name>          <NN>%" rows until a blank line.
+fn table_header_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)^\s*(Skills|Subagents|MCP servers)\s{2,}%\s*of\s*usage\s*$").unwrap())
+}
+fn table_row_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    // At least two spaces between name and percentage — the table columns are
+    // padded to align, and requiring the gap keeps a stray prose line (they
+    // never end in a bare "NN%" here) from being mistaken for a row.
+    RE.get_or_init(|| Regex::new(r"^\s*(\S.*?)\s{2,}(\d+)%\s*$").unwrap())
+}
+// "Showing last-known usage as of 2m ago (rate limited — try again in a moment)"
+// — the CLI's own admission that this reading is cached/stale.
+fn stale_notice_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)^\s*Showing\s+last-known\s+usage\s+as\s+of\s+(.+?)\s+ago").unwrap())
+}
+
 fn hhmm_local(ms: i64) -> String {
     Local
         .timestamp_millis_opt(ms)
@@ -92,19 +125,46 @@ fn label_for(kind: &str) -> String {
 }
 
 pub fn parse_usage(text: &str, now: i64) -> Option<Value> {
+    let raw_lines: Vec<&str> = text.split('\n').collect();
+    let lines: Vec<&str> = raw_lines.iter().map(|l| l.trim_end()).collect();
+
     let mut limits: Vec<Value> = Vec::new();
     let mut windows: Vec<Value> = Vec::new();
     let mut current_idx: Option<usize> = None;
     let mut subscription: Option<String> = None;
+    let mut stale = false;
+    // Which table a run of rows belongs to — only set right after a table
+    // header, cleared on any line that doesn't look like a row (esp. blanks).
+    let mut in_table: Option<&'static str> = None;
 
-    for raw in text.split('\n') {
-        let line = raw.trim_end();
+    fn ensure_window(windows: &mut Vec<Value>, current_idx: &mut Option<usize>) {
+        if current_idx.is_none() {
+            windows.push(json!({
+                "window": "Last 24h", "requests": 0, "sessions": 0,
+                "notes": [], "skills": [], "subagents": [], "mcp": [],
+            }));
+            *current_idx = Some(windows.len() - 1);
+        }
+    }
+
+    for (i, &raw) in raw_lines.iter().enumerate() {
+        let line = lines[i];
+        if line.trim().is_empty() {
+            in_table = None;
+            continue;
+        }
 
         if line.to_lowercase().contains("subscription to power your claude code usage") {
             subscription = Some(line.trim().to_string());
             continue;
         }
 
+        if stale_notice_re().is_match(line) {
+            stale = true;
+            continue;
+        }
+
+        // Old-format limit line ("Current session: 11% used · resets ...").
         if let Some(caps) = limit_re().captures(line) {
             let kind = caps.get(1).map(|m| m.as_str()).unwrap_or("");
             let used_pct: f64 = caps.get(2).map(|m| m.as_str()).unwrap_or("0").parse().unwrap_or(0.0);
@@ -114,28 +174,83 @@ pub fn parse_usage(text: &str, now: i64) -> Option<Value> {
                 .unwrap_or_default();
             let key = non_alpha_re().replace_all(&kind.to_lowercase(), "-").to_string();
             limits.push(json!({
-                "key": key,
-                "label": label_for(kind),
-                "used": used_pct / 100.0,
-                "detail": detail,
+                "key": key, "label": label_for(kind), "used": used_pct / 100.0, "detail": detail,
             }));
             continue;
         }
 
+        // Old-format window header ("Last 24h · 579 requests · 8 sessions").
         if let Some(caps) = window_re().captures(line) {
             let requests: i64 = caps[2].replace(',', "").parse().unwrap_or(0);
             let sessions: i64 = caps[3].replace(',', "").parse().unwrap_or(0);
             windows.push(json!({
                 "window": format!("Last {}", &caps[1]),
-                "requests": requests,
-                "sessions": sessions,
+                "requests": requests, "sessions": sessions,
                 "notes": [], "skills": [], "subagents": [], "mcp": [],
             }));
             current_idx = Some(windows.len() - 1);
             continue;
         }
 
-        // indented bullets under a window: behaviours and top skills/etc.
+        // Current-format progress-bar block: heading line (previous), the
+        // bar itself (this line), optional detail line (next).
+        if let Some(caps) = progress_bar_re().captures(line) {
+            let used_pct: f64 = caps[1].parse().unwrap_or(0.0);
+            let heading = if i > 0 { lines[i - 1].trim() } else { "" };
+            let heading = if heading.is_empty() { "Usage" } else { heading };
+            let detail = lines
+                .get(i + 1)
+                .map(|s| s.trim())
+                .filter(|next| {
+                    !next.is_empty()
+                        && table_header_re().captures(next).is_none()
+                        && progress_bar_re().captures(next).is_none()
+                        && limit_re().captures(next).is_none()
+                })
+                .unwrap_or("");
+            let key = non_alpha_re()
+                .replace_all(&heading.to_lowercase(), "-")
+                .trim_matches('-')
+                .to_string();
+            limits.push(json!({
+                "key": key, "label": heading.to_uppercase(), "used": used_pct / 100.0, "detail": detail,
+            }));
+            continue;
+        }
+
+        // Table header: "Skills                  % of usage" etc.
+        if let Some(caps) = table_header_re().captures(line) {
+            let kind = match caps[1].to_lowercase().as_str() {
+                "skills" => "skills",
+                "subagents" => "subagents",
+                "mcp servers" => "mcp",
+                _ => "",
+            };
+            if !kind.is_empty() {
+                ensure_window(&mut windows, &mut current_idx);
+                in_table = Some(kind);
+            }
+            continue;
+        }
+
+        // Table row, only while a header put us in table mode.
+        if let Some(kind) = in_table {
+            if let Some(caps) = table_row_re().captures(line) {
+                let name = caps[1].trim().to_string();
+                let pct = format!("{}%", &caps[2]);
+                if let Some(idx) = current_idx {
+                    if let Some(obj) = windows[idx].as_object_mut() {
+                        if let Some(arr) = obj.get_mut(kind).and_then(Value::as_array_mut) {
+                            arr.push(json!({ "name": name, "pct": pct }));
+                        }
+                    }
+                }
+                continue;
+            }
+            in_table = None;
+        }
+
+        // Old-format indented bullets under a window ("  Top skills: a 4%, b 1%").
         if let Some(idx) = current_idx {
             let leading_ws = raw.len() - raw.trim_start().len();
             if leading_ws >= 2 && !line.trim().is_empty() {
@@ -161,13 +276,17 @@ pub fn parse_usage(text: &str, now: i64) -> Option<Value> {
     if limits.is_empty() {
         return None;
     }
-    Some(json!({
+    let mut result = json!({
         "updatedTs": now,
         "updatedLabel": format!("updated {} · from claude /usage", hhmm_local(now)),
         "subscription": subscription,
         "limits": limits,
         "windows": windows,
-    }))
+    });
+    if stale {
+        result["stale"] = json!(true);
+    }
+    Some(result)
 }
 
 fn same_window(prev: &Value, next: &Value) -> bool {
@@ -393,5 +512,76 @@ mod tests {
         let next = json!({ "limits": [{ "key": "session", "used": 0.05, "detail": "resets 9pm" }] });
         let out = reconcile_usage(Some(&prev), next);
         assert!((out["limits"][0]["used"].as_f64().unwrap() - 0.05).abs() < 1e-9);
+    }
+
+    // Real output from CLI 2.1.224 — no "Current session/week:" lines at all
+    // anymore, replaced by a progress-bar credit block and Skills/Subagents/
+    // MCP servers tables. This used to return None ("could not parse /usage
+    // output").
+    #[test]
+    fn parses_current_progress_bar_and_tables_format() {
+        let text = concat!(
+            "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n",
+            "   Settings  Status   Config   Usage   Stats\n",
+            "   Session\n",
+            "   Total cost:            $0.0000\n",
+            "   Total duration (API):  0s\n",
+            "   Total duration (wall): 2m 46s\n",
+            "   Total code changes:    0 lines added, 0 lines removed\n",
+            "   Usage:                 0 input, 0 output, 0 cache read, 0 cache write\n",
+            "   Claude Code and Cowork credit\n",
+            "   ████████████████████████████▌                      57% used\n",
+            "   One-time credit · Expires September 29\n",
+            "   What's contributing to your limits usage?\n",
+            "   Approximate, based on local sessions on this machine — does not include other devices or claude.ai\n",
+            "   Last 24h · these are independent characteristics of your usage, not a breakdown\n",
+            "   100% of your usage came from subagent-heavy sessions\n",
+            "    Each subagent runs its own requests. Be deliberate about spawning them — and\n",
+            "    consider configuring a cheaper model for simpler subagents.\n",
+            "   93% of your usage came from sessions active for 8+ hours\n",
+            "    These are often background/loop sessions. Continuous usage can add up quickly\n",
+            "    so make sure it is intentional.\n",
+            "   87% of your usage was at >150k context\n",
+            "    Longer sessions are more expensive even when cached. /compact mid-task, /clear\n",
+            "    when switching to new tasks.\n",
+            "   Skills                  % of usage\n",
+            "   /jetbrains-debugger             4%\n",
+            "   /build-and-install              2%\n",
+            "\n",
+            "   Subagents               % of usage\n",
+            "   Explore                         7%\n",
+            "   general-purpose                 6%\n",
+            "\n",
+            "   MCP servers             % of usage\n",
+            "   android-studio-debugger         8%\n",
+            "   notion                          8%\n",
+            "   android                         6%\n",
+            "   claude.ai Atlassian              3%\n",
+            "   claude.ai Slack                  1%\n",
+            "\n",
+            "   d to day · w to week\n",
+            "   Showing last-known usage as of 2m ago (rate limited — try again in a moment)\n",
+        );
+        let parsed = parse_usage(text, 0).expect("should parse the current CLI format");
+
+        let limits = parsed["limits"].as_array().unwrap();
+        assert_eq!(limits.len(), 1);
+        assert_eq!(limits[0]["key"], "claude-code-and-cowork-credit");
+        assert!((limits[0]["used"].as_f64().unwrap() - 0.57).abs() < 1e-9);
+        assert_eq!(limits[0]["detail"], "One-time credit · Expires September 29");
+
+        assert_eq!(parsed["stale"], true);
+
+        let windows = parsed["windows"].as_array().unwrap();
+        assert_eq!(windows.len(), 1);
+        let w = &windows[0];
+        assert_eq!(w["skills"].as_array().unwrap().len(), 2);
+        assert_eq!(w["skills"][0]["name"], "/jetbrains-debugger");
+        assert_eq!(w["skills"][0]["pct"], "4%");
+        assert_eq!(w["subagents"].as_array().unwrap().len(), 2);
+        let mcp = w["mcp"].as_array().unwrap();
+        assert_eq!(mcp.len(), 5);
+        assert_eq!(mcp[3]["name"], "claude.ai Atlassian");
+        assert_eq!(mcp[3]["pct"], "3%");
     }
 }

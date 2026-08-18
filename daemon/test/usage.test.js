@@ -92,7 +92,72 @@ test('top-skills prose is parsed into rows the device can tabulate', () => {
   assert.ok(w.notes.some((n) => /150k context/.test(n)));
 });
 
-// --- reconciling consecutive readings -----------------------------------------
+// Real output from CLI 2.1.224 — no "Current session/week:" lines at all
+// anymore, replaced by a progress-bar credit block and Skills/Subagents/MCP
+// servers tables. Used to return null ("could not parse /usage output").
+const CURRENT_FORMAT_SAMPLE = [
+  '▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔',
+  '   Settings  Status   Config   Usage   Stats',
+  '   Session',
+  '   Total cost:            $0.0000',
+  '   Total duration (API):  0s',
+  '   Total duration (wall): 2m 46s',
+  '   Total code changes:    0 lines added, 0 lines removed',
+  '   Usage:                 0 input, 0 output, 0 cache read, 0 cache write',
+  '   Claude Code and Cowork credit',
+  '   ████████████████████████████▌                      57% used',
+  '   One-time credit · Expires September 29',
+  "   What's contributing to your limits usage?",
+  '   Approximate, based on local sessions on this machine — does not include other devices or claude.ai',
+  '   Last 24h · these are independent characteristics of your usage, not a breakdown',
+  '   100% of your usage came from subagent-heavy sessions',
+  '    Each subagent runs its own requests. Be deliberate about spawning them — and',
+  '    consider configuring a cheaper model for simpler subagents.',
+  '   93% of your usage came from sessions active for 8+ hours',
+  '    These are often background/loop sessions. Continuous usage can add up quickly',
+  '    so make sure it is intentional.',
+  '   87% of your usage was at >150k context',
+  '    Longer sessions are more expensive even when cached. /compact mid-task, /clear',
+  '    when switching to new tasks.',
+  '   Skills                  % of usage',
+  '   /jetbrains-debugger             4%',
+  '   /build-and-install              2%',
+  '',
+  '   Subagents               % of usage',
+  '   Explore                         7%',
+  '   general-purpose                 6%',
+  '',
+  '   MCP servers             % of usage',
+  '   android-studio-debugger         8%',
+  '   notion                          8%',
+  '   android                         6%',
+  '   claude.ai Atlassian              3%',
+  '   claude.ai Slack                  1%',
+  '',
+  '   d to day · w to week',
+  '   Showing last-known usage as of 2m ago (rate limited — try again in a moment)',
+].join('\n');
+
+test('parses the current CLI format (progress-bar credit block + tables)', () => {
+  const u = parseUsage(CURRENT_FORMAT_SAMPLE);
+  assert.equal(u.limits.length, 1);
+  assert.equal(u.limits[0].key, 'claude-code-and-cowork-credit');
+  assert.equal(u.limits[0].used, 0.57);
+  assert.equal(u.limits[0].detail, 'One-time credit · Expires September 29');
+  assert.equal(u.stale, true);
+
+  assert.equal(u.windows.length, 1);
+  const w = u.windows[0];
+  assert.deepEqual(w.skills, [
+    { name: '/jetbrains-debugger', pct: '4%' },
+    { name: '/build-and-install', pct: '2%' },
+  ]);
+  assert.equal(w.subagents.length, 2);
+  assert.equal(w.mcp.length, 5);
+  assert.deepEqual(w.mcp[3], { name: 'claude.ai Atlassian', pct: '3%' });
+});
+
+
 
 const reading = (limits) => ({ updatedTs: 1, limits });
 
