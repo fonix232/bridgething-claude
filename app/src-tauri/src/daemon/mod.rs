@@ -8,3 +8,4 @@ pub mod permission_bridge;
 pub mod persist;
 pub mod queue;
 pub mod sessions;
+pub mod usage;
