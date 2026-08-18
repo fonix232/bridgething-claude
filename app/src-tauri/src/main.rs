@@ -10,11 +10,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIcon,
     tray::TrayIconBuilder,
     Manager,
 };
+use tauri_plugin_autostart::ManagerExt;
 use tunnel::{Tunnel, TunnelStatus};
 
 struct DaemonUp(Arc<AtomicBool>);
@@ -115,6 +116,15 @@ fn main() {
             let logs_item = MenuItem::with_id(app, "logs", "View Logs", true, None::<&str>)?;
             let restart_item =
                 MenuItem::with_id(app, "restart_tunnel", "Restart Tunnel", true, None::<&str>)?;
+            let login_item_checked = app.autolaunch().is_enabled().unwrap_or(false);
+            let login_item = CheckMenuItem::with_id(
+                app,
+                "launch_at_login",
+                "Launch at Login",
+                true,
+                login_item_checked,
+                None::<&str>,
+            )?;
             let separator = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
@@ -123,6 +133,8 @@ fn main() {
                     &open_item,
                     &restart_item,
                     &logs_item,
+                    &separator,
+                    &login_item,
                     &separator,
                     &quit_item,
                 ],
@@ -133,7 +145,7 @@ fn main() {
                 .menu(&menu)
                 .title("\u{26AA}") // white circle: status unknown until the first poll
                 .tooltip("Claude Thing")
-                .on_menu_event(|app, event| match event.id.as_ref() {
+                .on_menu_event(move |app, event| match event.id.as_ref() {
                     "open" => show_dashboard(app),
                     "quit" => {
                         app.state::<Arc<Tunnel>>().quit();
@@ -141,6 +153,7 @@ fn main() {
                     }
                     "restart_tunnel" => app.state::<Arc<Tunnel>>().restart_now(),
                     "logs" => open_logs(app),
+                    "launch_at_login" => toggle_launch_at_login(app, &login_item),
                     _ => {}
                 })
                 .build(app)?;
@@ -190,4 +203,13 @@ fn show_dashboard(app: &tauri::AppHandle) {
 fn open_logs(app: &tauri::AppHandle) {
     let paths = resolve_paths(app);
     let _ = std::process::Command::new("open").arg(paths.log_dir).spawn();
+}
+
+fn toggle_launch_at_login(app: &tauri::AppHandle, item: &CheckMenuItem<tauri::Wry>) {
+    let autostart = app.autolaunch();
+    let now_enabled = autostart.is_enabled().unwrap_or(false);
+    let result = if now_enabled { autostart.disable() } else { autostart.enable() };
+    if result.is_ok() {
+        let _ = item.set_checked(!now_enabled);
+    }
 }

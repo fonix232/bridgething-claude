@@ -35,28 +35,37 @@ approve/deny from the dial.
 
 - A **Mac**, and a **Car Thing already running bridgething**.
 - A **USB-C cable that carries data** — charge-only cables will not work.
-- **Node 18+**, **[bun](https://bun.sh)**, and **Claude Code** installed and
-  signed in.
+- **Node 18+**, **[bun](https://bun.sh)**, **Rust** (via [rustup](https://rustup.rs)),
+  and **Claude Code** installed and signed in.
 
-Check the three:
+Check the four:
 
 ```sh
-node -v && bun --version && claude --version
+node -v && bun --version && rustc --version && claude --version
 ```
 
 ## Install
 
 ```sh
 git clone <this repo> && cd claude-thing
-./mac/install.sh
+npm --prefix app install
+node daemon/scripts/install-hooks.js
+npm --prefix app run tauri build
 ```
 
-That installs dependencies, builds the control page, merges the Claude Code hooks
-into `~/.claude/settings.json` (**a backup is written first, and nothing you
-already had is removed**), and installs two LaunchAgents — the daemon and the
-tunnel keeper.
+`install-hooks.js` merges the Claude Code hooks into `~/.claude/settings.json`
+(**a backup is written first, and nothing you already had is removed**) — the
+one piece of the old Mac daemon that stayed a small Node script rather than
+moving into the app. `tauri build` produces
+`app/src-tauri/target/release/bundle/macos/Claude Thing.app`; move that to
+`/Applications` and open it.
 
-When it finishes, <http://127.0.0.1:8790> should serve the control page.
+The app is a menu-bar item, not a Dock icon or a window — look for it in the
+menu bar. It runs its own daemon and reverse SSH tunnel in-process, scanning
+for the Car Thing on its own; the menu bar icon shows 🔴 (daemon not up yet),
+🟡 (daemon up, still looking for the device) or 🟢 (connected), and has
+**Open Dashboard**, **Restart Tunnel**, **View Logs**, **Launch at Login** and
+**Quit**.
 
 Then plug the Car Thing in over USB and push the app onto it:
 
@@ -66,7 +75,9 @@ bun run push
 
 The device switches to it immediately. Your sessions should appear.
 
-To undo everything: `./mac/uninstall.sh`.
+To undo everything: quit the app, uncheck **Launch at Login** first if it was
+checked, delete it from `/Applications`, and re-run
+`node daemon/scripts/uninstall-hooks.js` to remove the Claude Code hooks.
 
 ### Or install the app from the catalog
 
@@ -77,9 +88,9 @@ companion app and install **Claude** from it:
 https://raw.githubusercontent.com/jstgnkl/bridgething-claude/main/docs/catalog.v1.json
 ```
 
-That replaces `bun run push` only. The Mac daemon, the hooks and the tunnel still
-come from `./mac/install.sh` — without them the app has nothing to talk to and
-shows `DAEMON OFFLINE`.
+That replaces `bun run push` only. The Mac app and the hooks still come from the
+Install steps above — without them the app has nothing to talk to and shows
+`DAEMON OFFLINE`.
 
 ## Using it
 
@@ -119,24 +130,27 @@ Car Thing kiosk (chromium 800x480, --proxy-server=socks5://127.0.0.1:1080)
                                         ▲
                     reverse SSH tunnel over the USB link
                                         │
-Mac ── claude-thing daemon on 127.0.0.1:8790
+Mac ── Claude Thing.app, on 127.0.0.1:8790
         ├─ Claude Code hooks (PermissionRequest, PreToolUse, …)
         ├─ claude agents --json, transcripts
         └─ claude -p "/usage"
 ```
 
 The kiosk's chromium proxies **everything except loopback** through a SOCKS proxy
-that nothing here is listening on, so that path is dead. The tunnel instead puts
-the Mac daemon on the device's *own* loopback, where the kiosk reaches it
-directly — and the daemon keeps its `127.0.0.1` bind, so the permission API is
-never exposed to a network interface.
+that nothing here is listening on, so that path is dead. The app opens the
+reverse tunnel itself (scanning the USB gadget subnet for the device, no
+configuration needed) and puts itself on the device's *own* loopback, where the
+kiosk reaches it directly — its `127.0.0.1` bind means the permission API is
+never exposed to a network interface. There is no longer a separate daemon
+process or LaunchAgent: the app is a single menu-bar binary that owns the
+control-page window, the daemon logic, and the tunnel, all in one process.
 
 | Path | What |
 |---|---|
 | `src/` | The device app (vanilla ES modules, string-builder screens). |
-| `daemon/` | The Mac daemon on `127.0.0.1:8790`. Upstream's Bluetooth connector relay removed. |
-| `app/` | The Mac control page and its Tauri wrapper. Upstream's Bluetooth page removed. |
-| `mac/` | `install.sh`, `uninstall.sh`, `tunnel.sh`, LaunchAgent templates. |
+| `app/src-tauri/` | The Rust menu-bar app: daemon logic (sessions, permissions, usage, the WS hub) and the reverse-tunnel supervisor. |
+| `app/src/` | The control page, loaded straight into the app's window. Upstream's Bluetooth page removed. |
+| `daemon/` | Down to two small Node scripts now — `scripts/install-hooks.js` and `uninstall-hooks.js`, the app's own `/api/hooks/*` still shells out to them. |
 | `scripts/` | `push`, `share`, and the device tools below. |
 
 The app registers with the daemon's hub as `role: "device"`; the hub accepts any
@@ -188,30 +202,30 @@ header for the invocation.
 **The device shows the launcher, not the app.** A device reboot can wipe `/var`,
 taking the installed webapp with it. Re-push.
 
-**"DAEMON OFFLINE — CHECK THE MAC TUNNEL".** In order: is the daemon up
-(`launchctl list | grep claudething`), is the tunnel up (`pgrep -f 'ssh -N -R'`),
-and does the device see it —
+**"DAEMON OFFLINE — CHECK THE MAC TUNNEL".** Check the menu-bar icon first: 🔴
+means the app's own HTTP server never bound (another process already holds
+port 8790 — `lsof -i :8790`); 🟡 means it's up but still scanning for the
+device; 🟢 means it's connected. If it's stuck on 🟡, confirm the device sees it
+once connected —
 
 ```sh
-/usr/bin/ssh "root@$(mac/find-device.sh)" 'wget -q -O - -T 5 http://127.0.0.1:8790/status'
+/usr/bin/ssh root@<device-ip> 'wget -q -O - -T 5 http://127.0.0.1:8790/status'
 ```
 
-The device's address on the USB gadget subnet isn't fixed — `mac/find-device.sh`
-scans 10.42.1.0/24 for it, and `mac/tunnel.sh` keeps rescanning on its own
-whenever the device is unplugged, so there is nothing to configure.
+The device's address on the USB gadget subnet isn't fixed — the app scans
+10.42.1.0/24 for it and keeps rescanning on its own whenever the device is
+unplugged, so there is nothing to configure. **Restart Tunnel** in the menu
+forces an immediate rescan instead of waiting out the current link.
 
 After a reconnect the banner can take up to 30s to clear — that is the app's
 backoff, not a failure.
 
 **The tunnel won't start.** Something else may already hold the device's port
 8790; `ExitOnForwardFailure` makes that fail loudly rather than forward nothing.
-Kill the stale `ssh -N -R` and let launchd retry.
+Quit the app, `lsof -i :8790` to find whatever else is bound, and relaunch.
 
 **After reflashing the device**, its SSH host key changes:
 `rm ~/.ssh/known_hosts_carthing`.
-
-**Use `/usr/bin/ssh`,** not `ssh`, if your shell aliases it (e.g. to Kitty's ssh
-kitten) — the alias breaks non-interactive use.
 
 ## Status
 
