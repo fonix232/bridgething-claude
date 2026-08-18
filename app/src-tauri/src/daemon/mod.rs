@@ -1,7 +1,10 @@
 pub mod bus;
 pub mod config;
 pub mod context_window;
+pub mod focus;
 pub mod log;
 pub mod own_sessions;
+pub mod permission_bridge;
 pub mod persist;
+pub mod queue;
 pub mod sessions;
