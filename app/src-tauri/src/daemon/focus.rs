@@ -201,17 +201,18 @@ end tell"#
     )
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct FocusResult {
     pub focused: bool,
     pub reason: Option<String>,
     pub app: Option<String>,
     pub exact: bool,
     pub tty: Option<String>,
+    #[serde(rename = "viaHost")]
     pub via_host: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct TypeResult {
     pub typed: bool,
     pub reason: Option<String>,
