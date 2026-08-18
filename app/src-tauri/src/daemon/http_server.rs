@@ -113,7 +113,7 @@ async fn hooks_uninstall_handler(State(state): State<AppState>) -> impl IntoResp
     run_hook_script(&state.scripts_dir, "uninstall-hooks.js").await
 }
 
-pub async fn serve(state: AppState, host: &str, port: u16) -> std::io::Result<()> {
+pub async fn serve(state: AppState, host: &str, port: u16, on_bound: impl FnOnce()) -> std::io::Result<()> {
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .route("/status", get(status_handler))
@@ -125,6 +125,7 @@ pub async fn serve(state: AppState, host: &str, port: u16) -> std::io::Result<()
 
     let addr: SocketAddr = format!("{host}:{port}").parse().expect("valid bind address");
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    on_bound();
     log("--", &format!("http+ws on http://{host}:{port}  (ws path /ws)"));
     axum::serve(listener, app).await
 }
