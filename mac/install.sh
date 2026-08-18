@@ -47,14 +47,14 @@ ok "bun $(bun --version)"
 say "Installing dependencies"
 npm --prefix daemon install --no-audit --no-fund >/dev/null
 ok "daemon"
-npm --prefix webpage install --no-audit --no-fund >/dev/null
+npm --prefix app install --no-audit --no-fund >/dev/null
 ok "control page"
 bun install --silent
 ok "device app"
 
 say "Building"
-npm --prefix webpage run build >/dev/null
-ok "control page → webpage/dist"
+npm --prefix app run build >/dev/null
+ok "control page → app/dist"
 # --silent so bun does not echo the command past the redirect; build errors
 # still reach stderr.
 bun run --silent build >/dev/null

@@ -3,7 +3,7 @@
 # LaunchAgents (daemon and tunnel) and the Claude Code hooks (a backup of
 # settings.json is written first).
 #
-# Deliberately left in place: node_modules, the builds in webpage/dist and
+# Deliberately left in place: node_modules, the builds in app/dist and
 # dist/, and the log files. They cost nothing, and re-running install.sh
 # rewrites them anyway.
 set -uo pipefail

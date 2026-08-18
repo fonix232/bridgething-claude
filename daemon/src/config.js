@@ -15,7 +15,7 @@ export const DAEMON_VERSION = JSON.parse(
   fs.readFileSync(path.join(DAEMON_ROOT, 'package.json'), 'utf8')
 ).version;
 
-export const WEBPAGE_DIST = path.join(PROJECT_ROOT, 'webpage', 'dist');
+export const WEBPAGE_DIST = path.join(PROJECT_ROOT, 'app', 'dist');
 export const LOG_DIR = path.join(DAEMON_ROOT, 'logs');
 export const PID_FILE = path.join(DAEMON_ROOT, '.daemon.pid');
 // Daemon state that outlives the process (see persist.js). Overridable so tests

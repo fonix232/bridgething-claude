@@ -96,7 +96,7 @@ export function createHttpServer({ hub, store, permissionBridge, sources }) {
       } catch {}
     }
     res.writeHead(404);
-    res.end('claude-thing daemon: webpage not built (webpage/dist missing)');
+    res.end('claude-thing daemon: control page not built (app/dist missing)');
   });
 
   server.on('upgrade', (req, socket, head) => {

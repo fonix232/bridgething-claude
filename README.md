@@ -135,7 +135,7 @@ never exposed to a network interface.
 |---|---|
 | `src/` | The device app (vanilla ES modules, string-builder screens). |
 | `daemon/` | The Mac daemon on `127.0.0.1:8790`. Upstream's Bluetooth connector relay removed. |
-| `webpage/` | The Mac control page. Upstream's Bluetooth page removed. |
+| `app/` | The Mac control page and its Tauri wrapper. Upstream's Bluetooth page removed. |
 | `mac/` | `install.sh`, `uninstall.sh`, `tunnel.sh`, LaunchAgent templates. |
 | `scripts/` | `push`, `share`, and the device tools below. |
 
