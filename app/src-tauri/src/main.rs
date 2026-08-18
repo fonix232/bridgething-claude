@@ -1,6 +1,8 @@
 // Claude Thing: a tray-first Tauri app. No dock icon, no window until asked
 // for one — the tray is the primary surface, the control page is a click away.
 
+mod daemon;
+
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,

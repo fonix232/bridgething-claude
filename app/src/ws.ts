@@ -8,9 +8,20 @@ let connected = false;
 const connectionHandlers = new Set<(c: boolean) => void>();
 const topicHandlers = new Map<string, Set<Handler>>();
 
+// The control page used to be served BY the daemon's own HTTP server, so a
+// same-origin relative URL just worked. Now it's loaded straight into the
+// Tauri window from bundled assets (origin tauri://localhost, not
+// 127.0.0.1:8790), so the daemon's fixed host+port has to be named outright.
+function daemonPort() {
+  return (window as any).__CLAUDE_THING_PORT || 8790;
+}
+
+function daemonOrigin() {
+  return `http://127.0.0.1:${daemonPort()}`;
+}
+
 function wsUrl() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}/ws`;
+  return `ws://127.0.0.1:${daemonPort()}/ws`;
 }
 
 function setConnected(c: boolean) {
@@ -62,13 +73,13 @@ export function onConnection(handler: (c: boolean) => void): () => void {
 }
 
 export async function getStatus() {
-  const r = await fetch('/status');
+  const r = await fetch(`${daemonOrigin()}/status`);
   if (!r.ok) throw new Error(`status ${r.status}`);
   return r.json();
 }
 
 export async function postApi(path: string, body?: unknown) {
-  const r = await fetch(path, {
+  const r = await fetch(`${daemonOrigin()}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body ?? {}),
