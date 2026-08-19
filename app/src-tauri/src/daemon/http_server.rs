@@ -23,6 +23,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::oneshot;
+use tower_http::cors::CorsLayer;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -113,6 +114,23 @@ async fn hooks_uninstall_handler(State(state): State<AppState>) -> impl IntoResp
     run_hook_script(&state.scripts_dir, "uninstall-hooks.js").await
 }
 
+// The control page used to be same-origin with this server (served BY it), so
+// no CORS was ever needed. Now it's loaded into the Tauri window from bundled
+// assets (origin tauri://localhost in production, http://localhost:5173 under
+// `tauri dev`), so its fetch('/status')/postApi() calls are cross-origin and
+// get silently blocked without explicit allow-listing. Deliberately NOT a
+// wildcard: this widens the loopback service's exposure to only these two
+// known origins, not to every website in the user's regular browser.
+fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin([
+            "tauri://localhost".parse().unwrap(),
+            "http://localhost:5173".parse().unwrap(),
+        ])
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+        .allow_headers([axum::http::header::CONTENT_TYPE])
+}
+
 pub async fn serve(state: AppState, host: &str, port: u16, on_bound: impl FnOnce()) -> std::io::Result<()> {
     let app = Router::new()
         .route("/ws", get(ws_handler))
@@ -121,6 +139,7 @@ pub async fn serve(state: AppState, host: &str, port: u16, on_bound: impl FnOnce
         .route("/hook/{event}", post(hook_event_handler))
         .route("/api/hooks/install", post(hooks_install_handler))
         .route("/api/hooks/uninstall", post(hooks_uninstall_handler))
+        .layer(cors_layer())
         .with_state(state);
 
     let addr: SocketAddr = format!("{host}:{port}").parse().expect("valid bind address");

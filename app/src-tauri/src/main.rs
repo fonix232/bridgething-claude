@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{
+    image::Image,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIcon,
     tray::TrayIconBuilder,
@@ -143,7 +144,6 @@ fn main() {
             let tray: TrayIcon = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
-                .title("\u{26AA}") // white circle: status unknown until the first poll
                 .tooltip("Claude Thing")
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "open" => show_dashboard(app),
@@ -160,21 +160,27 @@ fn main() {
 
             let tunnel_for_poll = tunnel.clone();
             let daemon_up_for_poll = daemon_up.clone();
+            // Same app icon, tinted per status, instead of a colored-blob
+            // emoji title next to it — grey while scanning, red when the
+            // daemon itself isn't up, green once the tunnel is connected.
+            let icon_grey = Image::from_bytes(include_bytes!("../icons/tray/grey.png")).expect("tray icon grey.png");
+            let icon_red = Image::from_bytes(include_bytes!("../icons/tray/red.png")).expect("tray icon red.png");
+            let icon_green = Image::from_bytes(include_bytes!("../icons/tray/green.png")).expect("tray icon green.png");
             tauri::async_runtime::spawn(async move {
                 let mut ticker = tokio::time::interval(Duration::from_secs(2));
                 loop {
                     ticker.tick().await;
                     let up = daemon_up_for_poll.load(Ordering::SeqCst);
-                    let (title, tooltip) = match (up, tunnel_for_poll.status()) {
-                        (false, _) => ("\u{1F534}", "Claude Thing — daemon offline".to_string()),
+                    let (icon, tooltip) = match (up, tunnel_for_poll.status()) {
+                        (false, _) => (&icon_red, "Claude Thing — daemon offline".to_string()),
                         (true, TunnelStatus::Scanning) => {
-                            ("\u{1F7E1}", "Claude Thing — waiting for the Car Thing".to_string())
+                            (&icon_grey, "Claude Thing — waiting for the Car Thing".to_string())
                         }
                         (true, TunnelStatus::Connected { ip }) => {
-                            ("\u{1F7E2}", format!("Claude Thing — connected ({ip})"))
+                            (&icon_green, format!("Claude Thing — connected ({ip})"))
                         }
                     };
-                    let _ = tray.set_title(Some(title));
+                    let _ = tray.set_icon(Some(icon.clone()));
                     let _ = tray.set_tooltip(Some(&tooltip));
                 }
             });
