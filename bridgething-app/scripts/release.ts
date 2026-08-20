@@ -18,12 +18,15 @@ import { join, relative, resolve } from 'node:path';
 
 const REPO = 'https://github.com/jstgnkl/bridgething-claude';
 const RAW = 'https://raw.githubusercontent.com/jstgnkl/bridgething-claude/main';
-const ICON = `${RAW}/public/icon.svg`;
+const ICON = `${RAW}/bridgething-app/public/icon.svg`;
 const MIN_LIBBRIDGETHING = '0.8.0';
 
 const repoDir = resolve(import.meta.dir, '..');
 const distDir = resolve(repoDir, 'dist');
-const docsDir = resolve(repoDir, 'docs');
+// docs/ stays at the actual repo root (one level above bridgething-app/), not
+// under repoDir — its raw.githubusercontent.com URL is already published as
+// the catalog source in the companion app and must not move.
+const docsDir = resolve(repoDir, '..', 'docs');
 const catalogPath = join(docsDir, 'catalog.v1.json');
 
 const args = process.argv.slice(2);

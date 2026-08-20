@@ -5,7 +5,7 @@
     "name": "claude-thing",
     "description": "Claude Code on a Spotify Car Thing.",
     "homepage": "https://github.com/jstgnkl/bridgething-claude",
-    "icon": "https://raw.githubusercontent.com/jstgnkl/bridgething-claude/main/public/icon.svg"
+    "icon": "https://raw.githubusercontent.com/jstgnkl/bridgething-claude/main/bridgething-app/public/icon.svg"
   },
   "apps": [
     {
@@ -13,7 +13,7 @@
       "name": "Claude",
       "description": "Claude Code sessions, queue and usage on the Car Thing",
       "author": "jstgnkl",
-      "icon": "https://raw.githubusercontent.com/jstgnkl/bridgething-claude/main/public/icon.svg",
+      "icon": "https://raw.githubusercontent.com/jstgnkl/bridgething-claude/main/bridgething-app/public/icon.svg",
       "homepage": "https://github.com/jstgnkl/bridgething-claude",
       "source": "https://github.com/jstgnkl/bridgething-claude",
       "versions": [

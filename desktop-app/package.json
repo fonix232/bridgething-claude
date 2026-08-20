@@ -1,6 +1,6 @@
 {
-  "name": "claude-thing-app",
-  "version": "0.1.0",
+  "name": "desktop-app",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Control page for claude-thing: backend status, Car Thing link, settings",

@@ -1,0 +1,132 @@
+name: Release
+
+# Runs on every push to main that touches either app (or the catalog) —
+# bumps the shared patch version, builds bridgething-app's catalog release
+# and desktop-app's macOS/Windows/Linux bundles, and publishes all of it to
+# one GitHub Release tagged v<version>. The release's `catalog.v1.json` asset
+# is what makes /releases/latest/download/catalog.v1.json always resolve to
+# the newest one, listing every previously published version alongside it.
+#
+# NOTE: this pushes commits and tags directly to main using the default
+# GITHUB_TOKEN — if main has branch protection requiring PR review, those
+# pushes will fail and this whole pipeline needs a PAT with bypass rights.
+# NOTE: desktop-app's macOS build is ad-hoc signed only (no Apple Developer
+# ID configured) — fine to run locally, but Gatekeeper will warn on a
+# downloaded, quarantined copy until real codesigning/notarization secrets
+# are added.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bridgething-app/**'
+      - 'desktop-app/**'
+      - 'docs/catalog.v1.json'
+      - 'VERSION'
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: bump
+        run: |
+          NEW_VERSION=$(node .github/scripts/bump-version.mjs)
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Commit version bump and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION \
+            bridgething-app/package.json bridgething-app/public/manifest.json \
+            desktop-app/package.json desktop-app/hooks/package.json \
+            desktop-app/src-tauri/tauri.conf.json desktop-app/src-tauri/Cargo.toml
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }} [skip ci]"
+          git tag "v${{ steps.bump.outputs.version }}"
+          git push origin HEAD:main
+          git push origin "v${{ steps.bump.outputs.version }}"
+
+  build-bridgething:
+    needs: bump
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: oven-sh/setup-bun@v2
+      - working-directory: bridgething-app
+        run: |
+          bun install
+          bun run release --changelog "Automated release for v${{ needs.bump.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridgething-release
+          path: |
+            docs/*.zip
+            docs/catalog.v1.json
+
+  build-desktop:
+    needs: bump
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+          - platform: ubuntu-22.04
+          - platform: windows-latest
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Install Linux Tauri build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - working-directory: desktop-app
+        run: npm install
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop-app
+          tagName: v${{ needs.bump.outputs.version }}
+          releaseName: 'Claude Thing v${{ needs.bump.outputs.version }}'
+          releaseDraft: false
+          prerelease: false
+
+  finalize-catalog:
+    needs: [bump, build-bridgething, build-desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: bridgething-release
+          path: docs
+      - name: Attach bridgething assets + catalog to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "v${{ needs.bump.outputs.version }}" docs/*.zip docs/catalog.v1.json --clobber
+      - name: Commit the updated catalog back to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/catalog.v1.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update catalog for v${{ needs.bump.outputs.version }} [skip ci]"
+            git push origin HEAD:main
+          fi

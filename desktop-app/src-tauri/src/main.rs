@@ -23,7 +23,7 @@ struct DaemonUp(Arc<AtomicBool>);
 
 // Resolved from Tauri's own app-data dir for logs/state (works whether this
 // runs from the git checkout or an installed .app), except scripts_dir:
-// daemon/scripts/{install,uninstall}-hooks.js are only ever found relative to
+// hooks/scripts/{install,uninstall}-hooks.js are only ever found relative to
 // this checkout right now — see daemon::http_server's doc comment. Fine for
 // development; an installed, relocated .app would need this resolved some
 // other way (not yet built).
@@ -32,15 +32,15 @@ fn resolve_paths(app: &tauri::AppHandle) -> daemon::runtime::Paths {
         .path()
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("com.claudething.app"));
-    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    // CARGO_MANIFEST_DIR is desktop-app/src-tauri; one level up is desktop-app/.
+    let app_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .and_then(|p| p.parent())
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
     daemon::runtime::Paths {
         log_dir: base.join("logs"),
         state_dir: base.join("state"),
-        scripts_dir: project_root.join("daemon").join("scripts"),
+        scripts_dir: app_root.join("hooks").join("scripts"),
     }
 }
 

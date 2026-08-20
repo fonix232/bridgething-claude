@@ -48,36 +48,36 @@ node -v && bun --version && rustc --version && claude --version
 
 ```sh
 git clone <this repo> && cd claude-thing
-npm --prefix app install
-node daemon/scripts/install-hooks.js
-npm --prefix app run tauri build
+npm --prefix desktop-app install
+node desktop-app/hooks/scripts/install-hooks.js
+npm --prefix desktop-app run tauri build
 ```
 
 `install-hooks.js` merges the Claude Code hooks into `~/.claude/settings.json`
 (**a backup is written first, and nothing you already had is removed**) — the
 one piece of the old Mac daemon that stayed a small Node script rather than
 moving into the app. `tauri build` produces
-`app/src-tauri/target/release/bundle/macos/Claude Thing.app`; move that to
-`/Applications` and open it.
+`desktop-app/src-tauri/target/release/bundle/macos/Claude Thing.app`; move that
+to `/Applications` and open it.
 
 The app is a menu-bar item, not a Dock icon or a window — look for it in the
 menu bar. It runs its own daemon and reverse SSH tunnel in-process, scanning
-for the Car Thing on its own; the menu bar icon shows 🔴 (daemon not up yet),
-🟡 (daemon up, still looking for the device) or 🟢 (connected), and has
-**Open Dashboard**, **Restart Tunnel**, **View Logs**, **Launch at Login** and
-**Quit**.
+for the Car Thing on its own; the menu bar icon is tinted grey (still looking),
+red (daemon not up) or green (connected), and has **Open Dashboard**,
+**Restart Tunnel**, **View Logs**, **Launch at Login** and **Quit**.
 
 Then plug the Car Thing in over USB and push the app onto it:
 
 ```sh
-bun run push
+cd bridgething-app && bun install && bun run push
 ```
 
 The device switches to it immediately. Your sessions should appear.
 
 To undo everything: quit the app, uncheck **Launch at Login** first if it was
 checked, delete it from `/Applications`, and re-run
-`node daemon/scripts/uninstall-hooks.js` to remove the Claude Code hooks.
+`node desktop-app/hooks/scripts/uninstall-hooks.js` to remove the Claude Code
+hooks.
 
 ### Or install the app from the catalog
 
@@ -85,11 +85,13 @@ The device half is published as a bridgething catalog source. Add this url in th
 companion app and install **Claude** from it:
 
 ```
-https://raw.githubusercontent.com/jstgnkl/bridgething-claude/main/docs/catalog.v1.json
+https://github.com/jstgnkl/bridgething-claude/releases/latest/download/catalog.v1.json
 ```
 
-That replaces `bun run push` only. The Mac app and the hooks still come from the
-Install steps above — without them the app has nothing to talk to and shows
+That always resolves to the newest published release and lists every version
+still available, not just the latest — see [Releases](#releases) below. It
+replaces `bun run push` only: the Mac app and the hooks still come from the
+Install steps above, without them the app has nothing to talk to and shows
 `DAEMON OFFLINE`.
 
 ## Using it
@@ -147,11 +149,11 @@ control-page window, the daemon logic, and the tunnel, all in one process.
 
 | Path | What |
 |---|---|
-| `src/` | The device app (vanilla ES modules, string-builder screens). |
-| `app/src-tauri/` | The Rust menu-bar app: daemon logic (sessions, permissions, usage, the WS hub) and the reverse-tunnel supervisor. |
-| `app/src/` | The control page, loaded straight into the app's window. Upstream's Bluetooth page removed. |
-| `daemon/` | Down to two small Node scripts now — `scripts/install-hooks.js` and `uninstall-hooks.js`, the app's own `/api/hooks/*` still shells out to them. |
-| `scripts/` | `push`, `share`, and the device tools below. |
+| `bridgething-app/` | The device app: `src/` (vanilla ES modules, string-builder screens), `public/`, `test/`, and `scripts/` (push/share/release + the CDP dev tools below). Builds to a bridgething app package. |
+| `desktop-app/src-tauri/` | The Rust menu-bar app: daemon logic (sessions, permissions, usage, the WS hub) and the reverse-tunnel supervisor. Compiles for macOS, Windows and Linux. |
+| `desktop-app/src/` | The control page, loaded straight into the app's window. Upstream's Bluetooth page removed. |
+| `desktop-app/hooks/` | Down to two small Node scripts now — `scripts/install-hooks.js` and `uninstall-hooks.js`, the app's own `/api/hooks/*` still shells out to them. |
+| `docs/` | Release artifacts and the `catalog.v1.json` history — stays at the repo root; see [Releases](#releases). |
 
 The app registers with the daemon's hub as `role: "device"`; the hub accepts any
 string.
@@ -159,13 +161,16 @@ string.
 ## Developing
 
 ```sh
+cd bridgething-app
+bun install
 bun run dev     # vite at 800x480 in any browser — talks to 127.0.0.1:8790 directly
-bun run test    # 88 unit tests, no device needed
+bun run test    # unit tests, no device needed
 bun run build
 bun run push    # build + install onto the connected device
 ```
 
-To cut a catalog release, bump `version` in `public/manifest.json`, then:
+Cutting a release by hand still works (bump `version` in `public/manifest.json`
+first) — but ordinarily this is CI's job now, see [Releases](#releases):
 
 ```sh
 bun run release --changelog "what changed"
@@ -173,10 +178,8 @@ bun run release --changelog "what changed"
 
 That writes `docs/claude-thing-bridgething-v<version>.zip` (dist/ at the zip root,
 sourcemaps excluded) and folds the version into `docs/catalog.v1.json` with its
-size and sha256. Commit and push both — the catalog url serves straight off
-`main`, so a release is live the moment it lands. Never edit the `id` in
-`public/manifest.json`: it keys upgrade-in-place and the device's key-value
-namespace.
+size and sha256. Never edit the `id` in `public/manifest.json`: it keys
+upgrade-in-place and the device's key-value namespace.
 
 The dev loop needs no device and no tunnel — the daemon is already on the Mac's
 loopback. Save the hardware for final checks.
@@ -196,6 +199,33 @@ node scripts/measure.mjs            # assert screen geometry in a real 800x480 C
 cannot — the screens are string builders, so a card that lays out 30px taller
 than its container is invisible to them. It needs a headless Chrome; see its
 header for the invocation.
+
+## Releases
+
+`.github/workflows/ci.yml` builds and tests both apps on every push/PR to
+`main`. `.github/workflows/release.yml` runs on pushes to `main` that touch
+`bridgething-app/`, `desktop-app/`, or `docs/catalog.v1.json`, and does the
+rest end to end:
+
+1. Bumps the shared patch version (the `VERSION` file at the repo root is the
+   source of truth; `.github/scripts/bump-version.mjs` propagates it into both
+   apps' manifests) and pushes that commit + a `vX.Y.Z` tag to `main`.
+2. Builds `desktop-app` for macOS, Windows and Linux, and cuts a
+   `bridgething-app` catalog release the same way `bun run release` does.
+3. Publishes everything to one GitHub Release tagged `vX.Y.Z`, including an
+   updated `catalog.v1.json` that still lists every previously published
+   version — that's the file
+   `/releases/latest/download/catalog.v1.json` always resolves to.
+
+Both apps share one version number. A commit that only touches README/docs
+(other than `catalog.v1.json`) doesn't trigger a release.
+
+The version-bump and catalog-update steps push straight to `main` with the
+repo's default `GITHUB_TOKEN` — if branch protection requires PR review on
+`main`, they'll fail without a token that can bypass it. The macOS build is
+ad-hoc signed only (no Apple Developer ID configured); Gatekeeper will warn on
+a downloaded, quarantined copy until real signing/notarization secrets are
+added.
 
 ## Troubleshooting
 
