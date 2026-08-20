@@ -44,7 +44,44 @@ fn resolve_paths(app: &tauri::AppHandle) -> daemon::runtime::Paths {
     }
 }
 
+// Launched from Finder/LaunchServices (as opposed to a terminal), this
+// process only gets launchd's minimal default PATH — not the interactive
+// shell's. `claude` and `node`, both spawned by bare name elsewhere in the
+// daemon, are typically homebrew- or native-installer-managed and end up
+// unreachable ("No such file or directory") without this. Widening PATH
+// once here, before anything spawns a child process, fixes every call site.
+#[cfg(target_os = "macos")]
+fn fix_macos_path() {
+    let mut dirs: Vec<PathBuf> = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        dirs.push(home.join(".local/bin"));
+        dirs.push(home.join(".cargo/bin"));
+    }
+
+    let existing = std::env::var_os("PATH").unwrap_or_default();
+    let mut path_parts: Vec<PathBuf> = std::env::split_paths(&existing).collect();
+    let mut changed = false;
+    for dir in dirs {
+        if dir.is_dir() && !path_parts.contains(&dir) {
+            path_parts.push(dir);
+            changed = true;
+        }
+    }
+    if changed {
+        if let Ok(joined) = std::env::join_paths(path_parts) {
+            std::env::set_var("PATH", joined);
+        }
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "macos")]
+    fix_macos_path();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
