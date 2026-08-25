@@ -1,0 +1,14 @@
+{
+  "name": "claude-thing-hooks",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude Code hook install/uninstall for desktop-app — the daemon itself is ../src-tauri (Rust)",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "install-hooks": "node scripts/install-hooks.js",
+    "uninstall-hooks": "node scripts/uninstall-hooks.js"
+  }
+}
