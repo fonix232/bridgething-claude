@@ -121,30 +121,45 @@ impl HooksSource {
             }
             "PreToolUse" => {
                 let tool_name = payload.get("tool_name").and_then(Value::as_str);
-                let mut p = base.clone();
-                p.current_tool = Some(tool_name.map(str::to_string));
-                p.stopped_ts = Some(None);
-                p.waiting_for_input = Some(false);
-                p.thinking = Some(true);
-                self.store.touch(id, p);
-                if tool_name == Some("AskUserQuestion") {
-                    if let Some(q) = &self.queue {
-                        self.store.touch(
-                            id,
-                            SessionPatch {
-                                waiting_for_input: Some(true),
-                                ..Default::default()
-                            },
-                        );
-                        q.on_question(payload);
+                // A subagent's own tool call carries `agent_id`: it proves the
+                // parent session is still alive, but the tool belongs to the
+                // subagent's status, not the session's — setting the
+                // session's currentTool here would flicker it back and forth
+                // against whatever the subagent's own Task call already set.
+                if let Some(agent_id) = payload.get("agent_id").and_then(Value::as_str) {
+                    self.store.touch(id, base.clone());
+                    self.store.subagent_tool(id, agent_id, tool_name.map(str::to_string));
+                } else {
+                    let mut p = base.clone();
+                    p.current_tool = Some(tool_name.map(str::to_string));
+                    p.stopped_ts = Some(None);
+                    p.waiting_for_input = Some(false);
+                    p.thinking = Some(true);
+                    self.store.touch(id, p);
+                    if tool_name == Some("AskUserQuestion") {
+                        if let Some(q) = &self.queue {
+                            self.store.touch(
+                                id,
+                                SessionPatch {
+                                    waiting_for_input: Some(true),
+                                    ..Default::default()
+                                },
+                            );
+                            q.on_question(payload);
+                        }
                     }
                 }
             }
             "PostToolUse" => {
-                let mut p = base.clone();
-                p.current_tool = Some(None);
-                self.store.touch(id, p);
                 let tool_name = payload.get("tool_name").and_then(Value::as_str).unwrap_or("");
+                if let Some(agent_id) = payload.get("agent_id").and_then(Value::as_str) {
+                    self.store.touch(id, base.clone());
+                    self.store.subagent_tool(id, agent_id, None);
+                } else {
+                    let mut p = base.clone();
+                    p.current_tool = Some(None);
+                    self.store.touch(id, p);
+                }
                 if let Some(pb) = &self.permission_bridge {
                     pb.release_ran(id, tool_name, now_ms());
                 }
@@ -159,6 +174,19 @@ impl HooksSource {
                     if let Some(q) = &self.queue {
                         q.on_question_answered(payload);
                     }
+                }
+            }
+            "SubagentStart" => {
+                self.store.touch(id, base.clone());
+                if let Some(agent_id) = payload.get("agent_id").and_then(Value::as_str) {
+                    let agent_type = payload.get("agent_type").and_then(Value::as_str).unwrap_or("agent");
+                    self.store.subagent_start(id, agent_id, agent_type);
+                }
+            }
+            "SubagentStop" => {
+                self.store.touch(id, base.clone());
+                if let Some(agent_id) = payload.get("agent_id").and_then(Value::as_str) {
+                    self.store.subagent_stop(id, agent_id);
                 }
             }
             "Stop" => {

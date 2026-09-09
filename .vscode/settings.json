@@ -1,0 +1,25 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "pgrep": true,
+        "launchctl": true,
+        "cargo build": true,
+        "cargo check": true,
+        "/^source \"\\$HOME/\\.cargo/env\" && cargo check 2>&1 \\| grep -B2 -A 15 \"\\^error\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "mkdir": true,
+        "git mv": true,
+        "bun": true,
+        "osascript": true,
+        "pkill": true,
+        "npm run tauri": true,
+        "ping": true,
+        "nc": true,
+        "ssh": true,
+        "/^cd bridgething-app && node --test test/screens\\.test\\.js 2>&1 \\| tail -60$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

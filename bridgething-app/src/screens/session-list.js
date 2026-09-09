@@ -112,13 +112,20 @@ function meterBlock(s, eff) {
   return html + '</div>';
 }
 
+function agentsNote(count) {
+  if (!count) return '';
+  return count + ' agent' + (count === 1 ? '' : 's');
+}
+
 function subline(s, state) {
   var d = state.details[s.id];
+  var note = agentsNote(s.subagentCount);
+  var base;
   if (s.pendingPermission) return 'needs your answer';
-  if (d && d.currentTool) return d.currentTool + ' · ' + (d.lastMessage || '');
-  if (s.state === 'celebrate' && s.lastActivityTs) {
-    return 'finished ' + fmtDuration(now() - s.lastActivityTs) + ' ago';
-  }
-  if (d && d.lastMessage) return d.lastMessage;
-  return s.state === 'busy' ? 'working…' : '';
+  if (d && d.currentTool) base = d.currentTool + ' · ' + (d.lastMessage || '');
+  else if (s.state === 'celebrate' && s.lastActivityTs) base = 'finished ' + fmtDuration(now() - s.lastActivityTs) + ' ago';
+  else if (d && d.lastMessage) base = d.lastMessage;
+  else base = s.state === 'busy' ? 'working…' : '';
+  if (!note) return base;
+  return base ? base + ' · ' + note : note;
 }

@@ -92,6 +92,14 @@ test('idle reads IDLE when quiet and ENDED only when actually over', () => {
   assert.equal(stateLabel('idle', true), 'ENDED');
 });
 
+test('a tile with running subagents notes the count in its subline', () => {
+  const html = renderList(baseState({ sessions: [session({ subagentCount: 2 })] }));
+  assert.match(html, /2 agents/);
+
+  const quiet = renderList(baseState({ sessions: [session({ subagentCount: 0, state: 'idle' })] }));
+  assert.ok(!quiet.includes('agent'));
+});
+
 test('grid marks the selected tile and only that one', () => {
   const html = renderList(baseState({
     sessions: [session({ id: 'a' }), session({ id: 'b' }), session({ id: 'c' })],
@@ -299,6 +307,26 @@ test('detail shows tokens, cache and state, and waits politely before loading', 
   assert.match(html, /cache read/);
   assert.match(html, /1h 30m/);
   assert.match(html, /fable-5/, 'model prefix trimmed');
+});
+
+test('detail lists running subagents as chips, and draws nothing when there are none', () => {
+  const none = renderDetail(baseState({
+    details: { a: { id: 'a', name: 'proj', state: 'busy', tokens: { in: 0, out: 0 }, cacheRead: 0, permission: null } },
+  }), 'a');
+  assert.ok(!none.includes('agentshead'));
+
+  const html = renderDetail(baseState({
+    details: { a: {
+      id: 'a', name: 'proj', state: 'busy', tokens: { in: 0, out: 0 }, cacheRead: 0, permission: null,
+      subagents: [
+        { id: 'ag1', type: 'Explore', startedTs: 1, currentTool: 'Grep' },
+        { id: 'ag2', type: 'general-purpose', startedTs: 2, currentTool: null },
+      ],
+    } },
+  }), 'a');
+  assert.match(html, /2 AGENTS RUNNING/);
+  assert.match(html, /Explore · Grep/);
+  assert.match(html, /general-purpose/);
 });
 
 test('the connection dot reflects the daemon link on every screen', () => {

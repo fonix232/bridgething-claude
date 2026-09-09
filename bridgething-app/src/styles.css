@@ -1372,6 +1372,33 @@ html, body {
 .detail.state-busy .activity { border-left-color: var(--ok); }
 .detail.state-attention .activity { border-left-color: var(--warn); }
 .detail.state-celebrate .activity { border-left-color: var(--done); }
+.detail .agents {
+  margin-top: 10px;
+  flex-shrink: 0;
+}
+.detail .agentshead {
+  font-family: "JetBrains Mono", Menlo, monospace;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+.detail .agentschips {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 54px;
+  overflow: hidden;
+}
+.detail .achip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--panel);
+  font-family: "JetBrains Mono", Menlo, monospace;
+  font-size: 14px;
+  color: var(--bone);
+  white-space: nowrap;
+}
 .detail .lasttext {
   margin-top: 10px;
   flex: 1;

@@ -33,6 +33,21 @@ pub struct Permission {
     pub timeout_ms: u64,
 }
 
+// A running Task-tool subagent, keyed by its `agent_id` in the parent
+// session. Claude Code's SubagentStart/Stop hooks are the source of truth for
+// membership; PreToolUse/PostToolUse events carrying the same `agent_id`
+// update currentTool as the subagent works.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Subagent {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub agent_type: String,
+    #[serde(rename = "startedTs")]
+    pub started_ts: i64,
+    #[serde(rename = "currentTool")]
+    pub current_tool: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: String,
@@ -61,6 +76,7 @@ pub struct Session {
     pub wake_seq: u64,
     pub last_prompt: String,
     pub transcript_path: Option<String>,
+    pub subagents: HashMap<String, Subagent>,
 }
 
 impl Session {
@@ -93,6 +109,7 @@ impl Session {
             wake_seq: 0,
             last_prompt: String::new(),
             transcript_path: None,
+            subagents: HashMap::new(),
         }
     }
 }
@@ -250,6 +267,7 @@ fn summary(s: &Session) -> Value {
         "effort": s.effort,
         "model": s.model,
         "ended": s.ended,
+        "subagentCount": s.subagents.len(),
     })
 }
 
@@ -269,6 +287,9 @@ fn detail(s: &Session) -> Value {
     let last_message: String = s.last_message.chars().take(200).collect();
     obj.insert("lastMessage".into(), json!(last_message));
     obj.insert("permission".into(), json!(s.permission));
+    let mut subagents: Vec<&Subagent> = s.subagents.values().collect();
+    subagents.sort_by_key(|a| a.started_ts);
+    obj.insert("subagents".into(), json!(subagents));
     v
 }
 
@@ -355,6 +376,66 @@ impl Store {
     pub fn touch(&self, id: &str, mut patch: SessionPatch) {
         patch.last_activity_ts = Some(now_ms());
         self.upsert(id, patch);
+    }
+
+    // Keyed sub-collection, so it doesn't fit the flat SessionPatch shape —
+    // these three mirror upsert/touch's scheduling but write straight into
+    // session.subagents instead.
+    pub fn subagent_start(&self, session_id: &str, agent_id: &str, agent_type: &str) {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let s = inner
+                .sessions
+                .entry(session_id.to_string())
+                .or_insert_with(|| Session::new(session_id.to_string()));
+            s.subagents.insert(
+                agent_id.to_string(),
+                Subagent {
+                    id: agent_id.to_string(),
+                    agent_type: agent_type.to_string(),
+                    started_ts: now_ms(),
+                    current_tool: None,
+                },
+            );
+        }
+        self.schedule_snapshot();
+        self.schedule_detail(session_id.to_string());
+    }
+
+    // A finished subagent leaves at once, same as an ended session — there is
+    // no lingering "just finished" state for a subagent tile.
+    pub fn subagent_stop(&self, session_id: &str, agent_id: &str) {
+        let removed = {
+            let mut inner = self.inner.lock().unwrap();
+            match inner.sessions.get_mut(session_id) {
+                Some(s) => s.subagents.remove(agent_id).is_some(),
+                None => false,
+            }
+        };
+        if removed {
+            self.schedule_snapshot();
+            self.schedule_detail(session_id.to_string());
+        }
+    }
+
+    pub fn subagent_tool(&self, session_id: &str, agent_id: &str, tool: Option<String>) {
+        let changed = {
+            let mut inner = self.inner.lock().unwrap();
+            match inner
+                .sessions
+                .get_mut(session_id)
+                .and_then(|s| s.subagents.get_mut(agent_id))
+            {
+                Some(a) => {
+                    a.current_tool = tool;
+                    true
+                }
+                None => false,
+            }
+        };
+        if changed {
+            self.schedule_detail(session_id.to_string());
+        }
     }
 
     pub fn get(&self, id: &str) -> Option<Value> {

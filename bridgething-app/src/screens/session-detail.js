@@ -13,6 +13,24 @@ function contextMeter(fraction) {
     '</div>';
 }
 
+// Sub-agents (Task tool calls) the session currently has running. Kept to a
+// compact chip row — the detail screen has no room for a scrolling list, and
+// a finished subagent leaves the daemon's list at once, so nothing here ever
+// needs an ended/celebrate state of its own.
+function agentsBlock(d) {
+  var agents = d.subagents || [];
+  if (!agents.length) return '';
+  var chips = '';
+  for (var i = 0; i < agents.length; i++) {
+    var a = agents[i];
+    var label = a.type + (a.currentTool ? ' · ' + a.currentTool : '');
+    chips += '<span class="achip">' + esc(label) + '</span>';
+  }
+  return '<div class="agents">' +
+    '<div class="agentshead">' + agents.length + ' AGENT' + (agents.length === 1 ? '' : 'S') + ' RUNNING</div>' +
+    '<div class="agentschips">' + chips + '</div></div>';
+}
+
 export function renderDetail(state, id) {
   var d = state.details[id];
   if (!d) {
@@ -32,6 +50,7 @@ export function renderDetail(state, id) {
     '<div class="name">' + esc(d.name) + '</div>' +
     '<div class="meta">' + esc(metaStr.join(' · ')) + '</div>' +
     '<div class="activity">' + esc(d.currentTool ? d.currentTool + ' — working' : 'no active tool') + '</div>' +
+    agentsBlock(d) +
     '<div class="lasttext">' + esc(d.lastMessage || '') + '</div>' +
     contextMeter(d.context) +
     '<div class="statsrow">' +

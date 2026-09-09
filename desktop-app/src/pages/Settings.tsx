@@ -30,7 +30,7 @@ export function Settings() {
         <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">Claude Code hooks</div>
         <StatusRow label="Hook status" value={status?.hooks ? 'installed' : 'not installed'}
           tone={status?.hooks ? 'ok' : 'warn'}
-          hint="PermissionRequest, SessionStart/End, PreToolUse, PostToolUse, Stop, UserPromptSubmit" />
+          hint="PermissionRequest, SessionStart/End, PreToolUse, PostToolUse, SubagentStart/Stop, Stop, UserPromptSubmit" />
         <div className="mt-4 flex gap-2">
           <Button onClick={() => run('install')} disabled={busy}>Install hooks</Button>
           <Button variant="danger" onClick={() => run('uninstall')} disabled={busy}>Remove hooks</Button>

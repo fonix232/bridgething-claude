@@ -21,6 +21,8 @@ const EVENTS = {
   UserPromptSubmit: httpHook(5),
   PreToolUse: httpHook(5),
   PostToolUse: httpHook(5),
+  SubagentStart: httpHook(5),
+  SubagentStop: httpHook(5),
   Stop: httpHook(5),
 };
 
